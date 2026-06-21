@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>mic - insidegubbio</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    background: transparent;
+    display: flex; align-items: center; justify-content: center;
+    font-family: system-ui, sans-serif;
+    overflow: hidden;
+  }
+
+  #btn {
+    width: 48px; height: 48px;
+    border-radius: 50%;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: transform 0.15s;
+    -webkit-tap-highlight-color: transparent;
+    outline: none;
+  }
+  #btn:active { transform: scale(0.9); }
+  #btn svg { pointer-events: none; }
+
+  #btn.listening::before {
+    content: '';
+    position: absolute;
+    width: 48px; height: 48px;
+    border-radius: 50%;
+    border: 2px solid #ef4444;
+    animation: pulse 1.2s ease-out infinite;
+  }
+  @keyframes pulse {
+    0%   { transform: scale(1); opacity: 0.8; }
+    100% { transform: scale(2); opacity: 0; }
+  }
+</style>
+</head>
+<body>
+
+<button id="btn" aria-label="Microfono">
+  <!-- mic icon -->
+  <svg id="icon-mic" width="28" height="28" viewBox="0 0 256 256" fill="#9ca3af">
+    <path d="M128,176a48.05,48.05,0,0,0,48-48V80a48,48,0,0,0-96,0v48A48.05,48.05,0,0,0,128,176ZM96,80a32,32,0,0,1,64,0v48a32,32,0,0,1-64,0Zm40,120.26V224a8,8,0,0,1-16,0V200.26A80.11,80.11,0,0,1,48,120a8,8,0,0,1,16,0,64,64,0,0,0,128,0,8,8,0,0,1,16,0A80.11,80.11,0,0,1,136,200.26Z"/>
+  </svg>
+  <!-- stop icon (hidden by default) -->
+  <svg id="icon-stop" width="28" height="28" viewBox="0 0 256 256" fill="#ef4444" style="display:none">
+    <path d="M200,40H56A16,16,0,0,0,40,56V200a16,16,0,0,0,16,16H200a16,16,0,0,0,16-16V56A16,16,0,0,0,200,40Zm0,160H56V56H200Z"/>
+  </svg>
+</button>
+
+<script>
+  const btn = document.getElementById('btn')
+  const iconMic = document.getElementById('icon-mic')
+  const iconStop = document.getElementById('icon-stop')
+
+  let recognition = null
+  let listening = false
+
+  const params = new URLSearchParams(window.location.search)
+  const iconColor = params.get('color') || '#9ca3af'
+  iconMic.setAttribute('fill', iconColor)
+
+  function setListening(val) {
+    listening = val
+    if (val) {
+      btn.classList.add('listening')
+      iconMic.style.display = 'none'
+      iconStop.style.display = 'block'
+    } else {
+      btn.classList.remove('listening')
+      iconMic.style.display = 'block'
+      iconStop.style.display = 'none'
+    }
+  }
+
+  function postToParent(type, payload) {
+    window.parent.postMessage({ source: 'mic-bridge', type, ...payload }, '*')
+  }
+
+  function startRecognition() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SR) {
+      postToParent('error', { message: 'Riconoscimento vocale non supportato su questo browser.' })
+      return
+    }
+
+    recognition = new SR()
+    recognition.lang = 'it-IT'
+    recognition.continuous = false
+    recognition.interimResults = false
+    recognition.maxAlternatives = 1
+
+    recognition.onstart = () => setListening(true)
+
+    recognition.onresult = (e) => {
+      const transcript = Array.from(e.results)
+        .map(r => r[0].transcript)
+        .join(' ')
+        .trim()
+      if (transcript) postToParent('result', { transcript })
+    }
+
+    recognition.onerror = (e) => {
+      setListening(false)
+      const code = e.error || 'unknown'
+      const messages = {
+        'not-allowed': 'Permesso microfono negato. Abilitalo nelle impostazioni.',
+        'permission-denied': 'Permesso microfono negato. Abilitalo nelle impostazioni.',
+        'no-speech': 'Nessuna voce rilevata. Riprova.',
+        'network': 'Errore di rete.',
+        'service-not-allowed': 'Servizio non disponibile. Assicurati di essere su HTTPS.',
+      }
+      postToParent('error', { message: messages[code] || ('Errore: ' + code) })
+    }
+
+    recognition.onend = () => setListening(false)
+    recognition.start()
+  }
+
+  function stopRecognition() {
+    try { recognition?.stop() } catch {}
+    setListening(false)
+  }
+
+  btn.addEventListener('click', () => {
+    if (listening) stopRecognition()
+    else startRecognition()
+  })
+
+  window.addEventListener('message', (e) => {
+    if (e.data?.source !== 'mic-bridge-cmd') return
+    if (e.data.cmd === 'stop') stopRecognition()
+  })
+</script>
+</body>
+</html>
